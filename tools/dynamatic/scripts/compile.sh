@@ -27,6 +27,7 @@ ENABLE_DUPLICATION=${17:-0}
 CALCULATE_PATH_DELAYS=${18}
 INSTRUMENT_II=${19}
 USE_LSQ_SIZING=${20:-0}
+TIMING_MODELS=${21:-$DYNAMATIC_DIR/data/components.json}
 
 LLVM=$DYNAMATIC_DIR/llvm-project
 DYNAMATIC_BINS=$DYNAMATIC_DIR/bin
@@ -395,7 +396,7 @@ fi
 if [[ $USE_SHARING -ne 0 ]]; then
   # NOTE: to use this in dynamatic-opt, do ${SHARING_PASS:+"$SHARING_PASS"} to
   # conditionally pass the string as an argument if not empty.
-  SHARING_PASS="--credit-based-sharing=timing-models=$DYNAMATIC_DIR/data/components.json target-period=$TARGET_CP"
+  SHARING_PASS="--credit-based-sharing=timing-models=$TIMING_MODELS target-period=$TARGET_CP"
   echo_info "Set to apply credit-based sharing after buffer placement."
 fi
 
@@ -404,7 +405,7 @@ fi
 # without one, e.g. with on-merges, LSQs keep the default depth)
 LSQ_SIZING_PASS=""
 if [[ $USE_LSQ_SIZING -ne 0 ]]; then
-  LSQ_SIZING_PASS="--handshake-size-lsqs=timing-models=$DYNAMATIC_DIR/data/components.json target-period=$TARGET_CP"
+  LSQ_SIZING_PASS="--handshake-size-lsqs=timing-models=$TIMING_MODELS target-period=$TARGET_CP"
   echo_info "Set to size the LSQs after buffer placement."
 fi
 
@@ -413,9 +414,9 @@ if [[ "$BUFFER_ALGORITHM" == "on-merges" ]]; then
   # Simple buffer placement
   echo_info "Running simple buffer placement (on-merges)."
   "$DYNAMATIC_OPT_BIN" "$F_HANDSHAKE_TRANSFORMED" \
-    --handshake-set-unit-impl-attr="target-period=$TARGET_CP timing-models=$DYNAMATIC_DIR/data/components.json impl=$FPUNITS_GEN" \
+    --handshake-set-unit-impl-attr="target-period=$TARGET_CP timing-models=$TIMING_MODELS impl=$FPUNITS_GEN" \
     --handshake-set-buffering-properties="version=fpga20" \
-    --handshake-place-buffers="algorithm=$BUFFER_ALGORITHM solver=$MILP_SOLVER timing-models=$DYNAMATIC_DIR/data/components.json" \
+    --handshake-place-buffers="algorithm=$BUFFER_ALGORITHM solver=$MILP_SOLVER timing-models=$TIMING_MODELS" \
     ${LSQ_SIZING_PASS:+"$LSQ_SIZING_PASS"} \
     ${SHARING_PASS:+"$SHARING_PASS"} \
     > "$F_HANDSHAKE_BUFFERED"
@@ -449,9 +450,9 @@ else
   # mode and add "--debug-only=<DEBUG_TYPE>" to the binary call below. Check
   # out the value of <DEBUG_TYPE> in the cpp source files.
   "$DYNAMATIC_OPT_BIN" "$F_HANDSHAKE_TRANSFORMED" \
-    --handshake-set-unit-impl-attr="target-period=$TARGET_CP timing-models=$DYNAMATIC_DIR/data/components.json impl=$FPUNITS_GEN" \
+    --handshake-set-unit-impl-attr="target-period=$TARGET_CP timing-models=$TIMING_MODELS impl=$FPUNITS_GEN" \
     --handshake-set-buffering-properties="version=fpga20" \
-    --handshake-place-buffers="algorithm=$BUFFER_ALGORITHM solver=$MILP_SOLVER frequencies=$F_FREQUENCIES timing-models=$DYNAMATIC_DIR/data/components.json spec-timing-models=$DYNAMATIC_DIR/data/spec-timing.json target-period=$TARGET_CP timeout=300 dump-milp-models $CALCULATE_PATH_DELAYS_FLAG ftd=$FAST_TOKEN_DELIVERY \
+    --handshake-place-buffers="algorithm=$BUFFER_ALGORITHM solver=$MILP_SOLVER frequencies=$F_FREQUENCIES timing-models=$TIMING_MODELS spec-timing-models=$DYNAMATIC_DIR/data/spec-timing.json target-period=$TARGET_CP timeout=300 dump-milp-models $CALCULATE_PATH_DELAYS_FLAG ftd=$FAST_TOKEN_DELIVERY \
     blif-files=$DYNAMATIC_DIR/data/aig/ lut-delay=0.55 lut-size=6 acyclic-type" \
     ${LSQ_SIZING_PASS:+"$LSQ_SIZING_PASS"} \
     ${SHARING_PASS:+"$SHARING_PASS"} \

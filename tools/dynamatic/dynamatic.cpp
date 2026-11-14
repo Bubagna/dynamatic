@@ -311,6 +311,7 @@ public:
       "calculate-path-delays";
   static constexpr llvm::StringLiteral INSTRUMENT_II = "instrument-ii";
   static constexpr llvm::StringLiteral LSQ_SIZING = "lsq-sizing";
+  static constexpr llvm::StringLiteral TIMING_MODELS = "timing-models";
 
   Compile(FrontendState &state)
       : Command("compile",
@@ -361,6 +362,9 @@ public:
              "Size the load and store queues of the LSQs from the CFDFCs "
              "found by buffer placement (requires an MILP-based buffer "
              "placement algorithm); otherwise LSQs use the default depth"});
+    addOption({TIMING_MODELS,
+               "Path to the JSON file with the timing models of the units "
+               "(default: data/components.json)"});
   }
 
   CommandResult execute(CommandArguments &args) override;
@@ -415,10 +419,17 @@ public:
 
 class Synthesize : public Command {
 public:
+  static constexpr llvm::StringLiteral TOOL = "tool";
+
   Synthesize(FrontendState &state)
       : Command("synthesize",
-                "Synthesizes the VHDL produced during HDL writing using Vivado",
-                state) {}
+                "Synthesizes the HDL produced during HDL writing using a "
+                "synthesis tool of choice",
+                state) {
+    addOption({TOOL, "The synthesis tool to use, options are 'vivado' "
+                     "(default option: Vivado, Xilinx Kintex-7) and 'yosys' "
+                     "(Yosys and nextpnr, Lattice ECP5)"});
+  }
 
   CommandResult execute(CommandArguments &args) override;
 };
@@ -810,13 +821,25 @@ CommandResult Compile::execute(CommandArguments &args) {
   std::string instrumentII = args.flags.contains(INSTRUMENT_II) ? "1" : "0";
   std::string lsqSizing = args.flags.contains(LSQ_SIZING) ? "1" : "0";
 
+  std::string timingModels = state.dynamaticPath + getSeparator() + "data" +
+                             getSeparator() + "components.json";
+  if (auto it = args.options.find(TIMING_MODELS); it != args.options.end()) {
+    if (!fs::exists(it->second)) {
+      llvm::errs() << "Timing models file '" << it->second
+                   << "' does not exist.\n";
+      return CommandResult::FAIL;
+    }
+    // The script changes directory before buffer placement
+    timingModels = state.makeAbsolutePath(it->second);
+  }
+
   return execCmd(script, state.dynamaticPath, state.getKernelDir(),
                  state.getOutputDir(), state.getKernelName(), buffers,
                  floatToString(state.targetCP, 3), sharing,
                  state.fpUnitsGenerator, rigidification, kInduction, disableLSQ,
                  fastTokenDelivery, milpSolver, straightToQueue, speculation,
                  enableShortCircuit, enableDuplication, calculatePathDelays,
-                 instrumentII, lsqSizing);
+                 instrumentII, lsqSizing, timingModels);
 }
 
 CommandResult WriteHDL::execute(CommandArguments &args) {
@@ -915,12 +938,23 @@ CommandResult Synthesize::execute(CommandArguments &args) {
   if (!state.sourcePathIsSet(keyword))
     return CommandResult::FAIL;
 
+  std::string tool = "vivado";
   std::string script =
       state.getScriptsPath() + getSeparator() + "synthesize.sh";
 
+  if (auto it = args.options.find(TOOL); it != args.options.end()) {
+    if (it->second == "vivado" || it->second == "yosys") {
+      tool = it->second;
+    } else {
+      llvm::errs() << "Unknown synthesis tool '" << it->second
+                   << "', possible options are 'vivado' and 'yosys'.\n";
+      return CommandResult::FAIL;
+    }
+  }
+
   return execCmd(script, state.dynamaticPath, state.getOutputDir(),
                  state.getKernelName(), floatToString(state.targetCP, 3),
-                 floatToString(state.targetCP / 2, 3));
+                 floatToString(state.targetCP / 2, 3), tool);
 }
 
 CommandResult EstimatePower::execute(CommandArguments &args) {

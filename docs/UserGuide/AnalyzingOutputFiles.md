@@ -55,3 +55,11 @@ The `synthesize` command creates an `out/synth` directory where timing and resou
 - resource utilization
 - report on vivado synthesis  
 The file names are intuitive and would allow users to find the information they need  
+
+### Yosys and nextpnr Synthesis Results
+With `synthesize --tool yosys`, the `out/synth` directory instead contains the Yosys script (`synthesize.ys`) and log (`yosys.log`), the nextpnr log (`nextpnr.log`) and JSON report (`nextpnr_report.json`), and the same report files as with Vivado:
+- `utilization_post_syn.rpt`: cell counts after Yosys synthesis
+- `utilization_post_pr.rpt`: device utilization after place and route (`TRELLIS_COMB` are LUT4 logic cells, `TRELLIS_FF` flip-flops, `MULT18X18D` DSP multipliers, `DP16KD` block RAMs)
+- `timing_post_pr.rpt`: critical path and maximum frequency for the target clock
+
+The command also prints a summary of these numbers. A design that misses the target clock period is reported, not treated as a failure.
