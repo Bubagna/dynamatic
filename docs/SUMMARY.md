@@ -98,6 +98,7 @@
   - [Floating Point Units](DeveloperGuide/Specs/FloatingPointUnits.md)
   - [HW Flattening Pass](DeveloperGuide/Specs/HWFlattening.md)
   - [Timing Characterization](DeveloperGuide/Specs/TimingCharacterization.md)
+  - [Critical Path Analysis](DeveloperGuide/Specs/CriticalPathAnalysis.md)
 
 - [XLS](DeveloperGuide/Xls/XlsIntegration.md)
   - [Lower Handshake To XLS Pass](DeveloperGuide/Xls/LowerHandshakeToXlsPass.md)
