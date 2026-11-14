@@ -36,7 +36,9 @@ which would save the output JSON file in `out.json` which contains timing inform
 
 `python main.py --json-output out.json --dynamatic-dir /home/dynamatic/ --synth-tool "vivado-2019 vivado" --json-input struct.json`
 
-where the only key difference is the specification of the input JSON (`struct.json`) which contains information related to RTL characteristics of each component. If unspecified, the script will look for the following file `DYNAMATIC_DIR/data/rtl-config-vhdl-vivado.json`.
+where the only key difference is the specification of the input JSON (`struct.json`) which contains information related to RTL characteristics of each component. If unspecified, the script will look for the following file `DYNAMATIC_DIR/data/rtl-config-vhdl-vivado.json`, which describes the generic VHDL units of `data/vhdl` (the file `rtl-config-vhdl.json` describes generated units, whose VHDL has no generics to sweep).
+
+To characterize the units on a Lattice ECP5 with Yosys and nextpnr instead of Vivado, see [ECP5 Backend](#ecp5-backend-yosys--nextpnr).
 
 ## Overview
 
@@ -160,6 +162,46 @@ For now the code has some specific information related to Vivado tool. However, 
 - `extract_delay` -> This function extracts the total delay of a path from the reports. This is tailored for Vivado.
 
 These files might require some changes if the synthesis tool has different features from Vivado.
+
+## ECP5 Backend (Yosys + nextpnr)
+
+The script can also characterize the units on a Lattice ECP5 FPGA with open-source tools only: Yosys (with its GHDL plugin, which reads the VHDL units) for synthesis and nextpnr-ecp5 for placement and routing. The backend is in `nextpnr_backend.py` and is selected with `--synth-tool ecp5`:
+
+`python main.py --json-output components-ecp5.json --dynamatic-dir /home/dynamatic/ --synth-tool ecp5 --reference-json /home/dynamatic/data/components.json`
+
+`yosys`, `yosys-config` and `nextpnr-ecp5` must be on the `PATH` (the [OSS CAD Suite](https://github.com/YosysHQ/oss-cad-suite-build) has all of them). The GHDL plugin needs `GHDL_PREFIX`; if it is not set, the backend takes the `lib/ghdl` directory next to Yosys' data directory, which is where the OSS CAD Suite puts it. The target device is the LFE5UM5G-85F in the CABGA381 package, speed grade 8 (the only grade nextpnr supports for the ECP5-5G parts); `DEVICE`, `PACKAGE` and `SPEED_GRADE` in `nextpnr_backend.py` change it.
+
+Options that matter for this backend:
+- `--seeds N` (default 3): every parameter set is placed and routed with N placement seeds, and each delay is the median over them (the register-to-register delays described below take the worst seed). One-LUT paths move by a few tenths of a nanosecond from one seed to the next.
+- `--jobs N` (default `NUM_CORES`): number of parameter sets run in parallel. Each nextpnr run uses one thread.
+- `--reference-json FILE`: the script measures delays only. Each characterized unit takes its latency (the number of cycles) from FILE, and the units this run does not characterize (skipped units, units whose RTL needs vendor IP, failed runs) are copied whole from it. Without it, the output has the `delay` (and `inport`/`outport`) entries only.
+
+### How the delays are measured
+
+nextpnr has no equivalent of Vivado's `report_timing -from <port> -to <port>`: its JSON timing report (`--report`) gives one critical path per pair of clock domains. The backend therefore wraps the unit in a top entity where every input port class (data, valid, ready, condition) is driven by flip-flops on a clock of its own (`clk_in_data`, `clk_in_valid`, ...) and every output port class is captured by flip-flops on a clock of its own (`clk_out_data`, ...). The unit's `clk` and `rst` stay top-level ports. The critical path from `clk_in_X` to `clk_out_Y` is then the longest path through the unit from a port of class X to a port of class Y, so one placement and routing gives all the delay classes at once:
+
+| Delay | Path |
+|---|---|
+| `data` | `clk_in_data` -> `clk_out_data` |
+| `valid`, `ready` | `clk_in_valid` -> `clk_out_valid`, `clk_in_ready` -> `clk_out_ready` |
+| `VR`, `VD`, `VC` | `clk_in_valid` -> `clk_out_ready`, `clk_out_data`, `clk_out_condition` |
+| `CV`, `CR` | `clk_in_condition` -> `clk_out_valid`, `clk_out_ready` |
+| `inport` data | `clk_in_data` -> `clk` (data inputs to the unit's registers) |
+| `outport` data | `clk` -> `clk_out_data` (the unit's registers to its data outputs) |
+
+The delay of a path is the sum of its `logic` and `routing` segments; the `clk-to-q` of the launch flip-flop and the `setup` of the capture flip-flop belong to the wrapper and are left out. The routing from the launch flip-flop into the unit and from the unit to the capture flip-flop is inside the number: on a unit whose outputs are wires from its inputs this is about 0.47 ns (0.66 ns at 64 bits), which is not subtracted, while Vivado's port-to-port paths start and end at unplaced ports. The unit keeps its own hierarchy in the netlist (`keep_hierarchy`), so that synthesis cannot merge its logic with the wrapper's flip-flops. Buffer placement reads the `inport`/`outport` delays only for units with a latency, and only on the data signal, so the valid and ready port delays are written as zero.
+
+The unit's own `clk` is a clock domain of its own as well, so the critical path from `clk` to `clk` is the longest path between two of the unit's registers. For a unit with a latency, this delay replaces the delay key of its `latency` entry: `"latency": {"0": {"32": {"7.214": 4.0}}}` says that the 32-bit unit has a latency of 4 cycles and needs a clock period of at least 7.214 ns. When every key of a unit is above the target clock period, Dynamatic prints `CRITICAL WARNING: an operator has no known implementation capable of running at the requested operating frequency` and takes the entry with the smallest key; for the units this backend characterizes the key is used for nothing else (only the floating-point units, which are skipped here, also read it as their internal delay). Here the delay includes the `clk-to-q` and `setup` of the two flip-flops, since both belong to the unit, and it is the worst over the seeds, since the key is a lower bound on the clock period and a unit placed in a full circuit is unlikely to get a better placement than alone in an empty device. Each characterized width gets its own entry, with the latency that the reference gives for that width; reference entries wider than the widest characterized width are kept unchanged. This register-to-register delay does not include the paths from the unit's inputs or to its outputs: those are the `inport` and `outport` delays above.
+
+For each parameter set the backend writes a shell script (in the TCL directory) that runs Yosys, then nextpnr once per seed, then `nextpnr_backend.py` itself on the nextpnr reports. That last step writes, for each delay class, the report file that `report_parser.py` reads, in the same `Data Path Delay:` format as Vivado's, so the JSON assembly is shared with the Vivado flow. The per-seed delays of every clock pair are kept in `delays.json` next to the nextpnr reports.
+
+### Limits
+
+- Each unit is placed alone in an empty device: routing is shorter than in a full circuit.
+- The units in `skipping_units` are not characterized, among them the floating-point units, which instantiate Vivado or FloPoCo cores; with `--reference-json` they are carried over from the reference. The latencies (number of cycles) come from the reference as well; only their delay keys are measured, and only for the characterized units.
+- GHDL stops elaboration at a failing assertion of a VHDL unit: the legacy `control_merge` with data stops on purpose (it asks for the newer backend) and is carried over from the reference, and `sitofp` and `fptosi` are only characterized at 32 bits.
+- Nothing retimes the units: `sitofp` and `fptosi` do their whole conversion before their first register, and their `inport` delay (about 12 and 9 ns) is longer than any usual clock period.
+- Delays are not forced to grow with the bitwidth: a placement can make a narrower unit slower than a wider one by a few tenths of a nanosecond, while `BitwidthDepMetric` assumes a monotonic metric.
 
 ## Example: Parameter Sweep and Synthesis
 

@@ -2,7 +2,8 @@ from run_synthesis import run_synthesis, write_sdc_constraints
 import os
 import re
 from itertools import product
-from utils import parameters_ranges, VhdlInterfaceInfo, UnitCharacterization
+from utils import parameters_ranges, VhdlInterfaceInfo, UnitCharacterization, NUM_CORES
+import nextpnr_backend
 from typing import List, Tuple
 
 def extract_generics_ports(vhdl_code, entity_name):
@@ -25,7 +26,8 @@ def extract_generics_ports(vhdl_code, entity_name):
         raise ValueError("Could not find VHDL entity block.")
 
     # If there are multiple entities, we remove the one that does not match the entity_name
-    is_right_entity = entity_match.group(1) in entity_name
+    # The entity of handshake.fork is handshake_fork, which is not a substring of the unit name
+    is_right_entity = entity_match.group(1) in entity_name or entity_match.group(1) == entity_name.replace(".", "_")
     while not is_right_entity and entity_match:
         entity_to_remove = entity_match.group(1)
         # Remove the first entity block that does not match the entity_name
@@ -117,7 +119,8 @@ generic map (
 
     return wrapper_top, entity_name
 
-def run_unit_characterization(unit_name, list_params, hdl_out_dir, synth_tool, top_def_file, tcl_dir, rpt_dir, log_dir, clock_period):
+def run_unit_characterization(unit_name, list_params, hdl_out_dir, synth_tool, top_def_file, tcl_dir, rpt_dir, log_dir, clock_period,
+                              num_jobs=NUM_CORES, num_seeds=nextpnr_backend.DEFAULT_NUM_SEEDS):
     """
     Run characterization for a single unit using the specified synthesis tool.
     
@@ -131,6 +134,8 @@ def run_unit_characterization(unit_name, list_params, hdl_out_dir, synth_tool, t
         rpt_dir (str): Directory where reports will be stored.
         log_dir (str): Directory where logs will be stored.
         clock_period (float): Clock period in nanoseconds for the synthesis tool.
+        num_jobs (int): Number of synthesis jobs run in parallel.
+        num_seeds (int): Number of placement seeds per parameter set (ecp5 only).
     
     Returns:
         List[UnitCharacterization]: List of UnitCharacterization objects for the unit.
@@ -153,7 +158,11 @@ def run_unit_characterization(unit_name, list_params, hdl_out_dir, synth_tool, t
         vhdl_code = f.read()
     top_entity_name, vhdl_interface_info = extract_generics_ports(vhdl_code, unit_name)
     # Extract the template for the top file
-    wrapper_top, top_entity_name = generate_wrapper_top(top_entity_name, vhdl_interface_info, param_names)
+    is_ecp5 = nextpnr_backend.is_ecp5(synth_tool)
+    if is_ecp5:
+        wrapper_top, _ = nextpnr_backend.generate_wrapper_top(top_entity_name, vhdl_interface_info, param_names)
+    else:
+        wrapper_top, top_entity_name = generate_wrapper_top(top_entity_name, vhdl_interface_info, param_names)
     # Create sdc constraints file
     sdc_file = f"{tcl_dir}/period.sdc"
     write_sdc_constraints(sdc_file, clock_period)  # Set a default period of 4 ns
@@ -172,12 +181,15 @@ def run_unit_characterization(unit_name, list_params, hdl_out_dir, synth_tool, t
             f.write(wrapper_top_combined)
         unit_char_obj = UnitCharacterization(unit_name, top_entity_name, dict(zip(param_names, combination)), [top_file] + hdl_files, vhdl_interface_info, id)
         # Write the tcl file for synthesis
-        list_tcls.append(unit_char_obj.generate_tcl(tcl_dir, rpt_dir, sdc_file))
+        if is_ecp5:
+            list_tcls.append(nextpnr_backend.write_run_script(unit_char_obj, top_file, tcl_dir, rpt_dir, num_seeds))
+        else:
+            list_tcls.append(unit_char_obj.generate_tcl(tcl_dir, rpt_dir, sdc_file))
         id += 1
         unit_characterization_list.append(unit_char_obj)
 
     # Run the synthesis tool for each tcl file
     log_file = f"{log_dir}/synth_{unit_name}_log.txt"
-    run_synthesis(list_tcls, synth_tool, log_file)    
+    run_synthesis(list_tcls, synth_tool, log_file, num_jobs)    
 
     return unit_characterization_list

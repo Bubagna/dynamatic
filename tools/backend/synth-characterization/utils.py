@@ -18,11 +18,9 @@ skipping_units = [
     "handshake.trunci",
     "handshake.truncf",
     "handshake.sink",
-    "handshake.store",
     "handshake.maximumf",
     "handshake.minimumf",
     "handshake.extf",
-    "handshake.divsi",
     "handshake.divui",
     # unused units
     "handshake.join",
@@ -33,7 +31,6 @@ skipping_units = [
     "handshake.mem_controller",
     "mem_to_bram",
     # units characterized by other scripts
-    "handshake.fork",
     "handshake.lazy_fork",
     "handshake.lsq",
     "handshake.mulf",
@@ -233,7 +230,7 @@ def add_2d_ports(ports, direction):
     result = []
     for port in ports:
         if direction in port and "data_array" in port:
-            match = re.search(r'data_array\((\w+)\s*-\s*1\s*downto\s*0\)', port)
+            match = re.search(r'data_array\s*\((\w+)\s*-\s*1\s*downto\s*0\)', port)
             assert match, f"Could not find data_array port {port}."
             size_name = match.group(1)
             # Get corresponding size # Assuming only one value in parameters allowed

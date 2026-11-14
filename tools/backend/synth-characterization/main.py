@@ -2,10 +2,11 @@
 import argparse
 import json
 import os
-from report_parser import extract_rpt_data
+from report_parser import extract_rpt_data, merge_reference_model
 from hdl_manager import get_hdl_files
-from utils import VhdlInterfaceInfo, parameters_ranges, skipping_units
+from utils import VhdlInterfaceInfo, parameters_ranges, skipping_units, NUM_CORES
 from unit_characterization import run_unit_characterization
+from nextpnr_backend import DEFAULT_NUM_SEEDS, is_ecp5, add_port_delays, set_latency_keys
 
 def extract_rtl_info(unit_info):
     """
@@ -72,7 +73,8 @@ def get_dependency_dict(dataflow_units):
     return dependency_dict
 
 
-def run_characterization(json_input, json_output, dynamatic_dir, synth_tool, clock_period):
+def run_characterization(json_input, json_output, dynamatic_dir, synth_tool, clock_period,
+                         num_jobs=NUM_CORES, num_seeds=DEFAULT_NUM_SEEDS, reference_json=None):
     """
     Run characterization of dataflow units based on the provided JSON input.
     
@@ -80,7 +82,11 @@ def run_characterization(json_input, json_output, dynamatic_dir, synth_tool, clo
         json_input (str): Path to the input JSON file containing dataflow unit RTL information.
         json_output (str): Path to the output JSON file where characterization results will be saved.
         dynamatic_dir (str): Path to the DYNAMATIC home directory.
-        synth_tool (str): Synthesis tool to use for characterization (e.g., 'vivado').
+        synth_tool (str): Synthesis tool to use for characterization (e.g., 'vivado', or 'ecp5' for Yosys + nextpnr).
+        clock_period (float): Clock period in nanoseconds (Vivado only).
+        num_jobs (int): Number of synthesis jobs run in parallel.
+        num_seeds (int): Number of placement seeds per parameter set (ecp5 only).
+        reference_json (str): Timing model to take latencies and missing units from, or None.
     """
     # Load the input JSON file
     with open(json_input, 'r') as f:
@@ -137,14 +143,21 @@ def run_characterization(json_input, json_output, dynamatic_dir, synth_tool, clo
         os.system(f"rm -rf {tcl_dir}/*")
         # Copy the RTL files or generate them if necessary
         print(f"Processing unit: {unit_name}")
-        top_def_file = get_hdl_files(unit_name, generic, generator, hdl_dir, dynamatic_dir, all_dependencies_dict)
+        top_def_file = get_hdl_files(unit_name, generic, generator, dependencies, hdl_dir, dynamatic_dir, all_dependencies_dict)
         # After generating the HDL files, we can proceed with characterization
-        list_unit_chars = run_unit_characterization(unit_name, list_params, hdl_dir, synth_tool, top_def_file, tcl_dir, rpt_dir, log_dir, clock_period)
+        list_unit_chars = run_unit_characterization(unit_name, list_params, hdl_dir, synth_tool, top_def_file, tcl_dir, rpt_dir, log_dir, clock_period,
+                                                    num_jobs, num_seeds)
         # Store the results in the map_unit_to_list_unit_chars dictionary
         map_unit_to_list_unit_chars[unit_name] = list_unit_chars
     
     # Save the results to the output JSON file
     extract_rpt_data(map_unit_to_list_unit_chars, json_output)
+    if is_ecp5(synth_tool):
+        add_port_delays(map_unit_to_list_unit_chars, rpt_dir, json_output)
+    if reference_json:
+        merge_reference_model(json_output, reference_json)
+        if is_ecp5(synth_tool):
+            set_latency_keys(map_unit_to_list_unit_chars, rpt_dir, json_output)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run characterization of dataflow units")
@@ -170,13 +183,32 @@ if __name__ == "__main__":
         "--synth-tool",
         type=str,
         default="vivado",
-        help="Synthesis tool to use for characterization (default: vivado)",
+        help="Synthesis tool to use for characterization: the command that runs Vivado, or 'ecp5' for Yosys + nextpnr on a Lattice ECP5 (default: vivado)",
     )
     parser.add_argument(
         "--clock-period",
         type=float,
         default=4.0,
         help="Clock period in nanoseconds to use for synthesis (default: 4.0 ns)",
+    )
+    parser.add_argument(
+        "--jobs",
+        type=int,
+        default=NUM_CORES,
+        help=f"Number of synthesis jobs to run in parallel (default: {NUM_CORES})",
+    )
+    parser.add_argument(
+        "--seeds",
+        type=int,
+        default=DEFAULT_NUM_SEEDS,
+        help=f"ecp5 only: number of placement seeds per parameter set, the delays are the median over them and the register-to-register delays the worst of them (default: {DEFAULT_NUM_SEEDS})",
+    )
+    parser.add_argument(
+        "--reference-json",
+        type=str,
+        default=None,
+        help="Timing model (e.g., $DYNAMATIC_DIR/data/components.json) to take the latencies (in cycles) from, and the units this run does not characterize; "
+        "the script measures delays only",
     )
     args = parser.parse_args()
     json_input = args.json_input
@@ -186,4 +218,4 @@ if __name__ == "__main__":
     clock_period = args.clock_period
     if not json_input:
         json_input = f"{dynamatic_dir}/data/rtl-config-vhdl-vivado.json"
-    run_characterization(json_input, json_output, dynamatic_dir, synth_tool, clock_period)
+    run_characterization(json_input, json_output, dynamatic_dir, synth_tool, clock_period, args.jobs, args.seeds, args.reference_json)

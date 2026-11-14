@@ -87,11 +87,11 @@ def extract_rpt_data(map_unit_to_list_unit_chars, json_output):
                     readyDict["1"] = max(readyDict["1"], delay)
                 elif delay_type == ("valid", "ready"):
                     VRDelayFinal = max(VRDelayFinal, delay)
-                elif delay_type == ("control", "valid"):
+                elif delay_type == ("condition", "valid"):
                     CVDelayFinal = max(CVDelayFinal, delay)
-                elif delay_type == ("control", "ready"):
+                elif delay_type == ("condition", "ready"):
                     CRDelayFinal = max(CRDelayFinal, delay)
-                elif delay_type == ("valid", "control"):
+                elif delay_type == ("valid", "condition"):
                     VCDelayFinal = max(VCDelayFinal, delay)
                 elif delay_type == ("valid", "data"):
                     VDDelayFinal = max(VDDelayFinal, delay)
@@ -119,3 +119,42 @@ def extract_rpt_data(map_unit_to_list_unit_chars, json_output):
     # Save the output data to the JSON file
     with open(json_output, 'w') as f:
         json.dump(output_data, f, indent=2)
+
+
+def merge_reference_model(json_output, reference_json):
+    """
+    Complete the characterized model in json_output with an existing timing model.
+
+    The characterization measures delays only. A characterized unit takes its latency, and its
+    port delays unless the run measured them, from the reference; every unit of the reference
+    that this run did not characterize (skipped, failed, or keyed differently) is copied whole.
+    A characterized unit that the reference does not have gets a zero latency and zero port
+    delays, as a combinational unit has.
+
+    Args:
+        json_output (str): Path to the characterized model, rewritten in place.
+        reference_json (str): Path to the reference timing model.
+    """
+    with open(json_output, 'r') as f:
+        measured = json.load(f)
+    with open(reference_json, 'r') as f:
+        reference = json.load(f)
+
+    zero_port = {"delay": {"data": {"64": 0.0}, "valid": {"1": 0.0}, "ready": {"1": 0.0},
+                           "VR": 0.0, "CV": 0.0, "CR": 0.0, "VC": 0.0, "VD": 0.0}}
+    merged = {}
+    for unit_name, model in reference.items():
+        merged[unit_name] = model
+        if unit_name not in measured:
+            print(f"[INFO] Unit {unit_name} carried over from {reference_json}.")
+    for unit_name, model in measured.items():
+        if unit_name in reference:
+            entry = dict(reference[unit_name])
+        else:
+            print("\033[93m" + f"[WARNING] Unit {unit_name} is not in {reference_json}: it gets a zero latency." + "\033[0m")
+            entry = {"latency": {"0": {"64": {"0.0": 0.0}}}, "inport": zero_port, "outport": zero_port}
+        entry.update(model)
+        merged[unit_name] = entry
+
+    with open(json_output, 'w') as f:
+        json.dump(merged, f, indent=2)
