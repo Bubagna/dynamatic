@@ -28,6 +28,7 @@ CALCULATE_PATH_DELAYS=${18}
 INSTRUMENT_II=${19}
 USE_LSQ_SIZING=${20:-0}
 TIMING_MODELS=${21:-$DYNAMATIC_DIR/data/components.json}
+BACK_ANNOTATION=${22:-}
 
 LLVM=$DYNAMATIC_DIR/llvm-project
 DYNAMATIC_BINS=$DYNAMATIC_DIR/bin
@@ -449,7 +450,15 @@ else
   # To enable debug information, make sure that Dynamatic is built with Debug
   # mode and add "--debug-only=<DEBUG_TYPE>" to the binary call below. Check
   # out the value of <DEBUG_TYPE> in the cpp source files.
+  # Back-annotated buffering properties (e.g., channel delays measured after
+  # place and route) are set before the default ones, which do not override them
+  BACK_ANNOTATE_PASS=""
+  if [[ -n "$BACK_ANNOTATION" ]]; then
+    BACK_ANNOTATE_PASS="--back-annotate=filepath=$BACK_ANNOTATION"
+    echo_info "Back-annotating buffering properties from $BACK_ANNOTATION"
+  fi
   "$DYNAMATIC_OPT_BIN" "$F_HANDSHAKE_TRANSFORMED" \
+    ${BACK_ANNOTATE_PASS:+"$BACK_ANNOTATE_PASS"} \
     --handshake-set-unit-impl-attr="target-period=$TARGET_CP timing-models=$TIMING_MODELS impl=$FPUNITS_GEN" \
     --handshake-set-buffering-properties="version=fpga20" \
     --handshake-place-buffers="algorithm=$BUFFER_ALGORITHM solver=$MILP_SOLVER frequencies=$F_FREQUENCIES timing-models=$TIMING_MODELS spec-timing-models=$DYNAMATIC_DIR/data/spec-timing.json target-period=$TARGET_CP timeout=300 dump-milp-models $CALCULATE_PATH_DELAYS_FLAG ftd=$FAST_TOKEN_DELIVERY \

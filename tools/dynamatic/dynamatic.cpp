@@ -312,6 +312,7 @@ public:
   static constexpr llvm::StringLiteral INSTRUMENT_II = "instrument-ii";
   static constexpr llvm::StringLiteral LSQ_SIZING = "lsq-sizing";
   static constexpr llvm::StringLiteral TIMING_MODELS = "timing-models";
+  static constexpr llvm::StringLiteral BACK_ANNOTATION = "back-annotation";
 
   Compile(FrontendState &state)
       : Command("compile",
@@ -365,6 +366,9 @@ public:
     addOption({TIMING_MODELS,
                "Path to the JSON file with the timing models of the units "
                "(default: data/components.json)"});
+    addOption({BACK_ANNOTATION,
+               "Path to a JSON file with buffering properties to back-annotate "
+               "on channels before smart buffer placement (default: none)"});
   }
 
   CommandResult execute(CommandArguments &args) override;
@@ -833,13 +837,27 @@ CommandResult Compile::execute(CommandArguments &args) {
     timingModels = state.makeAbsolutePath(it->second);
   }
 
+  std::string backAnnotation;
+  if (auto it = args.options.find(BACK_ANNOTATION); it != args.options.end()) {
+    if (!fs::exists(it->second)) {
+      llvm::errs() << "Back-annotation file '" << it->second
+                   << "' does not exist.\n";
+      return CommandResult::FAIL;
+    }
+    if (buffers == "on-merges") {
+      llvm::errs() << "[WARNING] Back-annotation has no effect with the "
+                      "'on-merges' buffer placement algorithm.\n";
+    }
+    backAnnotation = state.makeAbsolutePath(it->second);
+  }
+
   return execCmd(script, state.dynamaticPath, state.getKernelDir(),
                  state.getOutputDir(), state.getKernelName(), buffers,
                  floatToString(state.targetCP, 3), sharing,
                  state.fpUnitsGenerator, rigidification, kInduction, disableLSQ,
                  fastTokenDelivery, milpSolver, straightToQueue, speculation,
                  enableShortCircuit, enableDuplication, calculatePathDelays,
-                 instrumentII, lsqSizing, timingModels);
+                 instrumentII, lsqSizing, timingModels, backAnnotation);
 }
 
 CommandResult WriteHDL::execute(CommandArguments &args) {

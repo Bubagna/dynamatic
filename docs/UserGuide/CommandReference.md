@@ -21,6 +21,8 @@ The `--fast-token-delivery` flag enables the *Fast Token Delivery (FTD)* algorit
 
 The `--timing-models <path>` option sets the JSON file with the timing models of the units, used by buffer placement and the other timing-driven passes (default: `data/components.json`). It allows, for example, to compile with timing models characterized for another FPGA.
 
+The `--back-annotation <path>` option reads a JSON file of buffering properties (for example, channel delays measured after place and route) and sets them on the channels before smart buffer placement, with the `--back-annotate` pass (default: none). It has no effect with `--buffer-algorithm on-merges`. The file has two keys, `operations` and `operands`; each entry of `operands` names the operation that consumes the channel and its operand index, e.g., `{"operations": [], "operands": [{"operation-name": "addi0", "operand-idx": 0, "attribute-type": "buffering-properties", "attribute-data": {"unbuf-delay": 6.0}}]}` adds 6 ns to the combinational delay of the channel feeding operand 0 of `addi0` when it is not buffered.
+
 - `write-hdl [--hdl <vhdl|verilog|smv>]`: Convert results from `compile` to a VHDL, Verilog or SMV file.
 - `simulate [--simulator <vsim|xsim|ghdl|verilator]`: Simulates the HDL produced by `write-hdl`. 
 > [!NOTE]  
